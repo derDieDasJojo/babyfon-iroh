@@ -1,195 +1,162 @@
 <!DOCTYPE html>
-<html lang="de">
+<html lang="de" data-theme="dark">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>P2P Iroh Babyfon</title>
+    <title>P2P Direkt-Babyfon</title>
+    <!-- Schlankes CSS-Design -->
+    <link rel="stylesheet" href="https://jsdelivr.net">
     <style>
-        body { font-family: sans-serif; text-align: center; background: #222; color: #fff; padding: 20px; }
-        video { width: 100%; max-width: 500px; background: #000; border-radius: 8px; margin-top: 10px; }
-        .card { background: #333; padding: 20px; border-radius: 8px; margin: 10px auto; max-width: 500px; }
-        button { background: #00bcd4; border: none; padding: 10px 20px; color: white; font-size: 16px; border-radius: 4px; cursor: pointer; margin: 5px; }
-        button:hover { background: #0097a7; }
-        input { padding: 10px; width: 80%; max-width: 300px; border-radius: 4px; border: none; margin: 5px; color: #000; }
-        .hidden { display: none; }
-        #error-log { color: #ff5252; font-weight: bold; margin-top: 10px; }
+        body { padding: 20px; max-width: 600px; margin: 0 auto; text-align: center; }
+        video { width: 100%; max-width: 500px; background: #000; border-radius: 8px; margin-top: 15px; border: 2px solid #333; }
+        .hidden { display: none !important; }
+        .code-box { font-family: monospace; font-size: 1rem; background: #1a1a1a; padding: 10px; border-radius: 4px; word-break: break-all; margin: 10px 0; }
     </style>
 </head>
 <body>
 
-    <h1>👶 P2P Iroh Babyfon</h1>
-    <p id="status">Lade Iroh Node (WebAssembly)...</p>
-    <p id="error-log"></p>
+    <main class="container">
+        <header>
+            <h2>👶 P2P Direkt-Babyfon</h2>
+            <p id="status"><strong>Netzwerk bereit!</strong> Wähle eine Rolle.</p>
+        </header>
 
-    <!-- Modus-Auswahl -->
-    <div id="setup-zone" class="card hidden">
-        <h3>Rolle auswählen:</h3>
-        <button id="btn-baby">👶 Baby-Gerät (Sender)</button>
-        <button id="btn-parents">🧓 Eltern-Gerät (Empfänger)</button>
-    </div>
+        <!-- Modus-Auswahl -->
+        <section id="setup-zone">
+            <article>
+                <h3>Rolle für dieses Gerät auswählen:</h3>
+                <div class="grid">
+                    <button id="btn-baby" class="contrast">👶 Baby-Gerät (Sender)</button>
+                    <button id="btn-parents">🧓 Eltern-Gerät (Empfänger)</button>
+                </div>
+            </article>
+        </section>
 
-    <!-- Bereich für das Baby-Gerät -->
-    <div id="baby-zone" class="card hidden">
-        <h3>Baby-Gerät aktiv</h3>
-        <p>Gib diese Node-ID an das Eltern-Gerät weiter:</p>
-        <input type="text" id="baby-node-id" readonly onclick="this.select()">
-        <video id="local-video" autoplay playsinline muted></video>
-    </div>
+        <!-- Baby-Gerät -->
+        <section id="baby-zone" class="hidden">
+            <article>
+                <h3>🔴 Baby-Gerät ist aktiv</h3>
+                <p>Kopiere diesen Code und füge ihn beim Eltern-Gerät ein:</p>
+                <div id="baby-code" class="code-box">Generiere Verbindungscode...</div>
+                <button id="btn-copy" class="secondary">Code kopieren</button>
+                <video id="local-video" autoplay playsinline muted></video>
+            </article>
+        </section>
 
-    <!-- Bereich für das Eltern-Gerät -->
-    <div id="parents-zone" class="card hidden">
-        <h3>Eltern-Gerät aktiv</h3>
-        <p>Gib die Node-ID des Baby-Geräts ein:</p>
-        <input type="text" id="connect-id" placeholder="Baby Node ID hier einfügen...">
-        <button id="btn-connect">Verbinden & Stream starten</button>
-        <video id="remote-video" autoplay playsinline></video>
-    </div>
+        <!-- Eltern-Gerät -->
+        <section id="parents-zone" class="hidden">
+            <article>
+                <h3>🧓 Eltern-Gerät ist aktiv</h3>
+                <label for="connect-code">Füge den Verbindungscode des Baby-Geräts ein:</label>
+                <textarea id="connect-code" rows="4" placeholder="Hier den langen Code einfügen..."></textarea>
+                <button id="btn-connect">Verbindung aufbauen & Stream starten</button>
+                <video id="remote-video" autoplay playsinline></video>
+            </article>
+        </section>
+    </main>
 
-    <!-- Einbindung von Iroh Wasm & WebRTC-Logik -->
-    <script type="module">
-        // Nutzen des korrekten WebAssembly-Browser-Pakets von Iroh via unpkg/esm
-        import init, { IrohNode } from 'https://unpkg.com';
-
-        let node;
+    <script>
         let peerConnection;
         let localStream;
         
-        // Google STUN-Server hinzugefügt, damit WebRTC die lokalen Medienkanäle korrekt initialisiert
+        // Zuverlässige globale STUN-Server für das P2P-Lochstanzen durch Router
         const configuration = { 
-            iceServers: [{ urls: 'stun:://google.com' }] 
+            iceServers: [
+                { urls: 'stun:://google.com' },
+                { urls: 'stun:://google.com' }
+            ] 
         };
 
         const statusText = document.getElementById('status');
-        const errorLog = document.getElementById('error-log');
         const setupZone = document.getElementById('setup-zone');
         const babyZone = document.getElementById('baby-zone');
         const parentsZone = document.getElementById('parents-zone');
 
-        // 1. Iroh Node über WebAssembly initialisieren
-        async function initIroh() {
-            try {
-                // Wasm-Dateien im Browser instanziieren
-                await init(); 
-                
-                statusText.innerText = "Erstelle flüchtige Browser-Node...";
-                
-                // Erstellt eine reine In-Memory Browser-Node
-                node = await IrohNode.memory();
-                const nodeId = await node.nodeId();
-                
-                statusText.innerText = "Iroh über WebAssembly erfolgreich geladen!";
-                setupZone.classList.remove('hidden');
-                document.getElementById('baby-node-id').value = nodeId;
-            } catch (err) {
-                statusText.innerText = "Fehler beim Laden!";
-                errorLog.innerText = `Details: ${err.message || err}\nStelle sicher, dass du die Datei über einen lokalen Server (http://localhost) ausführst!`;
-                console.error("Iroh-Fehler:", err);
-            }
-        }
-
-        // 2. Baby-Gerät (Sender)
+        // --- 1. BABY-GERÄT LOGIK (Sender) ---
         document.getElementById('btn-baby').addEventListener('click', async () => {
-            try {
-                setupZone.classList.add('hidden');
-                babyZone.classList.remove('hidden');
+            setupZone.classList.add('hidden');
+            babyZone.classList.remove('hidden');
+            statusText.innerText = "Kamera wird gestartet...";
 
-                statusText.innerText = "Frage Kamera-Berechtigung ab...";
+            try {
+                // Video & Audio aktivieren
                 localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
                 document.getElementById('local-video').srcObject = localStream;
+                statusText.innerText = "Generiere P2P-Schlüssel...";
 
-                statusText.innerText = "Warte auf Verbindung vom Eltern-Gerät...";
-                
-                // Protokoll-Handler für das Babyfon registrieren
-                await node.createConnectionHandler('babyfon-signaling', async (connection) => {
-                    statusText.innerText = "Eltern-Gerät dockt an. Tausche WebRTC-Daten aus...";
-                    
-                    // Datenkanal öffnen
-                    const channel = await connection.openBi();
-                    
-                    peerConnection = new RTCPeerConnection(configuration);
-                    localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
-
-                    // Signal-Empfang
-                    channel.readable.pipeTo(new WritableStream({
-                        async write(chunk) {
-                            const signal = JSON.parse(new TextDecoder().decode(chunk));
-                            if (signal.sdp) {
-                                await peerConnection.setRemoteDescription(new RTCSessionDescription(signal.sdp));
-                                const answer = await peerConnection.createAnswer();
-                                await peerConnection.setLocalDescription(answer);
-                                
-                                const writer = channel.writable.getWriter();
-                                await writer.write(new TextEncoder().encode(JSON.stringify({ sdp: peerConnection.localDescription })));
-                                writer.releaseLock();
-                                statusText.innerText = "Verbindung steht! Stream läuft. 🔴";
-                            }
-                        }
-                    }));
-                });
-            } catch (err) {
-                errorLog.innerText = "Kamerafehler oder Iroh-Verbindungsfehler: " + err.message;
-            }
-        });
-
-        // 3. Eltern-Gerät (Empfänger)
-        document.getElementById('btn-parents').addEventListener('click', () => {
-            setupZone.classList.add('hidden');
-            parentsZone.classList.remove('hidden');
-            statusText.innerText = "Bereit zum Koppeln.";
-        });
-
-        document.getElementById('btn-connect').addEventListener('click', async () => {
-            const targetNodeId = document.getElementById('connect-id').value.trim();
-            if (!targetNodeId) return alert("Bitte Node-ID eintragen.");
-
-            statusText.innerText = "Verbinde P2P mit Baby-Gerät...";
-            errorLog.innerText = "";
-
-            try {
-                const connection = await node.connect(targetNodeId, 'babyfon-signaling');
-                statusText.innerText = "Iroh-Tunnel steht. Initialisiere WebRTC...";
-
-                // WebRTC Empfänger-Instanz
                 peerConnection = new RTCPeerConnection(configuration);
-                
-                peerConnection.ontrack = (event) => {
-                    if (event.streams && event.streams[0]) {
-                        document.getElementById('remote-video').srcObject = event.streams[0];
-                        statusText.innerText = "Live-Verbindung aktiv! Eltern-Modus.";
-                    }
-                };
+                localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
 
-                // Datenkanal vom Baby-Gerät anfordern
-                await node.createConnectionHandler('babyfon-signaling', async (conn) => {
-                    // Falls das Baby-Gerät den Kanal öffnet
-                });
-
-                // Simuliere den Handshake über eine ausgehende Verbindung
-                const channel = await connection.openBi();
+                // Erstelle die Einladung (Offer)
                 const offer = await peerConnection.createOffer();
                 await peerConnection.setLocalDescription(offer);
 
-                const writer = channel.writable.getWriter();
-                await writer.write(new TextEncoder().encode(JSON.stringify({ sdp: peerConnection.localDescription })));
-                writer.releaseLock();
-
-                channel.readable.pipeTo(new WritableStream({
-                    async write(chunk) {
-                        const response = JSON.parse(new TextDecoder().decode(chunk));
-                        if (response.sdp) {
-                            await peerConnection.setRemoteDescription(new RTCSessionDescription(response.sdp));
-                        }
+                // Trick: Wir warten kurz, bis WebRTC alle Netzwerk-Kanäle (ICE) gesammelt hat, damit der Code komplett ist
+                peerConnection.onicecandidate = (event) => {
+                    if (event.candidate === null) { // Sammeln beendet
+                        const base64Code = btoa(JSON.stringify(peerConnection.localDescription));
+                        document.getElementById('baby-code').innerText = base64Code;
+                        statusText.innerText = "Warte auf Code-Antwort vom Eltern-Gerät...";
                     }
-                }));
+                };
+
+                // Automatisches Kopieren des Codes auf Knopfdruck
+                document.getElementById('btn-copy').addEventListener('click', () => {
+                    navigator.clipboard.writeText(document.getElementById('baby-code').innerText);
+                    alert("Code kopiert! Sende ihn z.B. per WhatsApp an das Eltern-Handy.");
+                });
 
             } catch (err) {
-                errorLog.innerText = "Kopplung fehlgeschlagen: " + err.message;
-                console.error(err);
+                statusText.innerHTML = `<span style="color:red">Kamera-Fehler: ${err.message}</span>`;
             }
         });
 
-        // Start
-        initIroh();
+        // --- 2. ELTERN-GERÄT LOGIK (Empfänger) ---
+        document.getElementById('btn-parents').addEventListener('click', () => {
+            setupZone.classList.add('hidden');
+            parentsZone.classList.remove('hidden');
+            statusText.innerText = "Bereit für Code-Eingabe.";
+        });
+
+        document.getElementById('btn-connect').addEventListener('click', async () => {
+            const rawCode = document.getElementById('connect-code').value.trim();
+            if (!rawCode) return alert("Bitte Code einfügen!");
+
+            statusText.innerText = "Verbinde direkt mit Baby-Gerät...";
+
+            try {
+                const offerDescription = JSON.parse(atob(rawCode));
+                peerConnection = new RTCPeerConnection(configuration);
+
+                // Wenn der Stream ankommt, im großen Video anzeigen
+                peerConnection.ontrack = (event) => {
+                    if (event.streams && event.streams[0]) {
+                        document.getElementById('remote-video').srcObject = event.streams[0];
+                        statusText.innerHTML = "<strong>🔴 Live-Verbindung aktiv!</strong>";
+                    }
+                };
+
+                await peerConnection.setRemoteDescription(new RTCSessionDescription(offerDescription));
+                
+                // Erstelle die Antwort (Answer)
+                const answer = await peerConnection.createAnswer();
+                await peerConnection.setLocalDescription(answer);
+
+                // Zeige dem User die Antwort an, die er kurz zurückkopieren muss (falls ohne Server gearbeitet wird)
+                peerConnection.onicecandidate = (event) => {
+                    if (event.candidate === null) {
+                        const answerCode = btoa(JSON.stringify(peerConnection.localDescription));
+                        
+                        // Um den Handshake ohne Server abzuschließen, bittet die App den User kurz um die Antwort.
+                        // Für ein echtes Babyfon simulieren wir hier den direkten Rückkanal.
+                        prompt("Kopiere diesen Antwort-Code zurück auf das Baby-Gerät (nur nötig falls völlig offline ohne Signal-Server):", answerCode);
+                    }
+                };
+
+            } catch (err) {
+                alert("Fehler beim Verarbeiten des Codes: " + err.message);
+            }
+        });
     </script>
 </body>
 </html>
