@@ -10,14 +10,16 @@
         .card { background: #333; padding: 20px; border-radius: 8px; margin: 10px auto; max-width: 500px; }
         button { background: #00bcd4; border: none; padding: 10px 20px; color: white; font-size: 16px; border-radius: 4px; cursor: pointer; margin: 5px; }
         button:hover { background: #0097a7; }
-        input { padding: 10px; width: 80%; max-width: 300px; border-radius: 4px; border: none; margin: 5px; }
+        input { padding: 10px; width: 80%; max-width: 300px; border-radius: 4px; border: none; margin: 5px; color: #000; }
         .hidden { display: none; }
+        #error-log { color: #ff5252; font-weight: bold; margin-top: 10px; }
     </style>
 </head>
 <body>
 
     <h1>👶 P2P Iroh Babyfon</h1>
-    <p id="status">Lade Iroh Node...</p>
+    <p id="status">Lade Iroh Node (WebAssembly)...</p>
+    <p id="error-log"></p>
 
     <!-- Modus-Auswahl -->
     <div id="setup-zone" class="card hidden">
@@ -45,135 +47,148 @@
 
     <!-- Einbindung von Iroh Wasm & WebRTC-Logik -->
     <script type="module">
-        // Importiert Iroh direkt über ein ESM-fähiges CDN
-        import { Node } from 'https://esm.run';
+        // Nutzen des korrekten WebAssembly-Browser-Pakets von Iroh via unpkg/esm
+        import init, { IrohNode } from 'https://unpkg.com';
 
         let node;
         let peerConnection;
         let localStream;
-        const configuration = { iceServers: [] }; // Keine STUN/TURN nötig, da Iroh das Lochstanzen übernimmt!
+        
+        // Google STUN-Server hinzugefügt, damit WebRTC die lokalen Medienkanäle korrekt initialisiert
+        const configuration = { 
+            iceServers: [{ urls: 'stun:://google.com' }] 
+        };
 
-        // DOM Elemente
         const statusText = document.getElementById('status');
+        const errorLog = document.getElementById('error-log');
         const setupZone = document.getElementById('setup-zone');
         const babyZone = document.getElementById('baby-zone');
         const parentsZone = document.getElementById('parents-zone');
 
-        // 1. Iroh Node initialisieren
+        // 1. Iroh Node über WebAssembly initialisieren
         async function initIroh() {
             try {
-                statusText.innerText = "Verbinde mit dem Iroh-Netzwerk...";
-                // Startet eine flüchtige In-Memory P2P Node im Browser
-                node = await Node.memory();
-                const nodeInfo = await node.status();
+                // Wasm-Dateien im Browser instanziieren
+                await init(); 
                 
-                statusText.innerText = "Iroh bereit!";
+                statusText.innerText = "Erstelle flüchtige Browser-Node...";
+                
+                // Erstellt eine reine In-Memory Browser-Node
+                node = await IrohNode.memory();
+                const nodeId = await node.nodeId();
+                
+                statusText.innerText = "Iroh über WebAssembly erfolgreich geladen!";
                 setupZone.classList.remove('hidden');
-                
-                document.getElementById('baby-node-id').value = nodeInfo.nodeId;
+                document.getElementById('baby-node-id').value = nodeId;
             } catch (err) {
-                statusText.innerText = "Fehler beim Laden von Iroh: " + err.message;
-                console.error(err);
+                statusText.innerText = "Fehler beim Laden!";
+                errorLog.innerText = `Details: ${err.message || err}\nStelle sicher, dass du die Datei über einen lokalen Server (http://localhost) ausführst!`;
+                console.error("Iroh-Fehler:", err);
             }
         }
 
-        // 2. Logik für das Baby-Gerät (Sender)
+        // 2. Baby-Gerät (Sender)
         document.getElementById('btn-baby').addEventListener('click', async () => {
-            setupZone.classList.add('hidden');
-            babyZone.classList.remove('hidden');
+            try {
+                setupZone.classList.add('hidden');
+                babyZone.classList.remove('hidden');
 
-            // Kamera & Mikrofon aktivieren
-            localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-            document.getElementById('local-video').srcObject = localStream;
+                statusText.innerText = "Frage Kamera-Berechtigung ab...";
+                localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+                document.getElementById('local-video').srcObject = localStream;
 
-            // Warte auf eingehende Iroh-Verbindungen vom Eltern-Gerät
-            // Wir nutzen das ALPN-Protokoll 'babyfon-signaling' für den Datenaustausch
-            const endpoint = node.net();
-            const server = await endpoint.accept('babyfon-signaling');
-            
-            statusText.innerText = "Warte auf Eltern-Gerät...";
-
-            while (true) {
-                const connection = await server.accept();
-                statusText.innerText = "Eltern-Gerät verbindet sich...";
+                statusText.innerText = "Warte auf Verbindung vom Eltern-Gerät...";
                 
-                const biStream = await connection.acceptBi();
-                const reader = biStream.readable.getReader();
-                const writer = biStream.writable.getWriter();
-
-                // WebRTC-Objekt erstellen
-                peerConnection = new RTCPeerConnection(configuration);
-                localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
-
-                // Wenn WebRTC ein Offer-Paket (SDP) über Iroh empfängt
-                const { value } = await reader.read();
-                const signal = JSON.parse(new TextDecoder().decode(value));
-
-                if (signal.sdp) {
-                    await peerConnection.setRemoteDescription(new RTCSessionDescription(signal.sdp));
-                    const answer = await peerConnection.createAnswer();
-                    await peerConnection.setLocalDescription(answer);
+                // Protokoll-Handler für das Babyfon registrieren
+                await node.createConnectionHandler('babyfon-signaling', async (connection) => {
+                    statusText.innerText = "Eltern-Gerät dockt an. Tausche WebRTC-Daten aus...";
                     
-                    // Sende die WebRTC-Antwort zurück über Iroh
-                    await writer.write(new TextEncoder().encode(JSON.stringify({ sdp: peerConnection.localDescription })));
-                    statusText.innerText = "Übertragung läuft live! 🔴";
-                }
-                break;
+                    // Datenkanal öffnen
+                    const channel = await connection.openBi();
+                    
+                    peerConnection = new RTCPeerConnection(configuration);
+                    localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+
+                    // Signal-Empfang
+                    channel.readable.pipeTo(new WritableStream({
+                        async write(chunk) {
+                            const signal = JSON.parse(new TextDecoder().decode(chunk));
+                            if (signal.sdp) {
+                                await peerConnection.setRemoteDescription(new RTCSessionDescription(signal.sdp));
+                                const answer = await peerConnection.createAnswer();
+                                await peerConnection.setLocalDescription(answer);
+                                
+                                const writer = channel.writable.getWriter();
+                                await writer.write(new TextEncoder().encode(JSON.stringify({ sdp: peerConnection.localDescription })));
+                                writer.releaseLock();
+                                statusText.innerText = "Verbindung steht! Stream läuft. 🔴";
+                            }
+                        }
+                    }));
+                });
+            } catch (err) {
+                errorLog.innerText = "Kamerafehler oder Iroh-Verbindungsfehler: " + err.message;
             }
         });
 
-        // 3. Logik für das Eltern-Gerät (Empfänger)
+        // 3. Eltern-Gerät (Empfänger)
         document.getElementById('btn-parents').addEventListener('click', () => {
             setupZone.classList.add('hidden');
             parentsZone.classList.remove('hidden');
-            statusText.innerText = "Bereit zum Verbinden.";
+            statusText.innerText = "Bereit zum Koppeln.";
         });
 
         document.getElementById('btn-connect').addEventListener('click', async () => {
             const targetNodeId = document.getElementById('connect-id').value.trim();
-            if (!targetNodeId) return alert("Bitte eine gültige Node-ID eingeben.");
+            if (!targetNodeId) return alert("Bitte Node-ID eintragen.");
 
-            statusText.innerText = "Verbinde P2P mit Baby-Gerät via Iroh...";
+            statusText.innerText = "Verbinde P2P mit Baby-Gerät...";
+            errorLog.innerText = "";
 
             try {
-                const endpoint = node.net();
-                // Baue eine direkte Iroh-Netzwerkverbindung zum Baby-Gerät auf
-                const connection = await endpoint.connect(targetNodeId, 'babyfon-signaling');
-                const biStream = await connection.openBi();
-                const writer = biStream.writable.getWriter();
-                const reader = biStream.readable.getReader();
+                const connection = await node.connect(targetNodeId, 'babyfon-signaling');
+                statusText.innerText = "Iroh-Tunnel steht. Initialisiere WebRTC...";
 
-                // WebRTC initialisieren
+                // WebRTC Empfänger-Instanz
                 peerConnection = new RTCPeerConnection(configuration);
-
-                // Wenn der Video/Audio-Stream ankommt, im Video-Element anzeigen
+                
                 peerConnection.ontrack = (event) => {
-                    document.getElementById('remote-video').srcObject = event.streams[0];
-                    statusText.innerText = "Verbindung erfolgreich! Höre und sehe Baby.";
+                    if (event.streams && event.streams[0]) {
+                        document.getElementById('remote-video').srcObject = event.streams[0];
+                        statusText.innerText = "Live-Verbindung aktiv! Eltern-Modus.";
+                    }
                 };
 
-                // WebRTC Verbindung einleiten (Offer erstellen)
-                // Da wir P2P via Iroh verbunden sind, tricksen wir WebRTC aus, indem wir
-                // die Daten lokal generieren und direkt durch den Iroh-Tunnel jagen.
+                // Datenkanal vom Baby-Gerät anfordern
+                await node.createConnectionHandler('babyfon-signaling', async (conn) => {
+                    // Falls das Baby-Gerät den Kanal öffnet
+                });
+
+                // Simuliere den Handshake über eine ausgehende Verbindung
+                const channel = await connection.openBi();
                 const offer = await peerConnection.createOffer();
                 await peerConnection.setLocalDescription(offer);
 
-                // Sende das WebRTC Offer via Iroh an das Baby-Gerät
+                const writer = channel.writable.getWriter();
                 await writer.write(new TextEncoder().encode(JSON.stringify({ sdp: peerConnection.localDescription })));
+                writer.releaseLock();
 
-                // Warte auf die Antwort (Answer) vom Baby-Gerät via Iroh
-                const { value } = await reader.read();
-                const response = JSON.parse(new TextDecoder().decode(value));
-                
-                await peerConnection.setRemoteDescription(new RTCSessionDescription(response.sdp));
+                channel.readable.pipeTo(new WritableStream({
+                    async write(chunk) {
+                        const response = JSON.parse(new TextDecoder().decode(chunk));
+                        if (response.sdp) {
+                            await peerConnection.setRemoteDescription(new RTCSessionDescription(response.sdp));
+                        }
+                    }
+                }));
 
             } catch (err) {
-                statusText.innerText = "Verbindungsfehler: " + err.message;
+                errorLog.innerText = "Kopplung fehlgeschlagen: " + err.message;
                 console.error(err);
             }
         });
 
-        // Starten
+        // Start
         initIroh();
     </script>
 </body>
