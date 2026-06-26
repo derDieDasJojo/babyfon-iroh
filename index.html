@@ -3,25 +3,25 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Felsenfestes P2P Babyfon</title>
+    <title>Serverloses P2P Babyfon</title>
     <link rel="stylesheet" href="https://jsdelivr.net">
     <style>
         body { padding: 20px; max-width: 600px; margin: 0 auto; text-align: center; }
         video { width: 100%; max-width: 500px; background: #000; border-radius: 8px; margin-top: 15px; border: 2px solid #333; }
         .hidden { display: none !important; }
-        #canvas-container { margin: 20px auto; background: white; padding: 15px; display: inline-block; border-radius: 8px; }
-        canvas { display: block; }
+        .link-box { background: #1a1a1a; padding: 15px; border-radius: 8px; margin: 15px 0; border: 1px solid #00bcd4; }
+        input[type="text"] { font-family: monospace; font-size: 0.8rem; text-align: center; color: #fff; background: #2d2d2d; }
     </style>
 </head>
 <body>
 
     <main class="container">
         <header>
-            <h2>👶 Serverloses P2P Babyfon</h2>
+            <h2>👶 P2P Messenger-Babyfon</h2>
             <p id="status">Wähle die Rolle für dieses Gerät.</p>
         </header>
 
-        <!-- Rolle auswählen -->
+        <!-- Sektion 1: Rolle auswählen -->
         <section id="setup-zone">
             <article>
                 <div class="grid">
@@ -31,47 +31,59 @@
             </article>
         </section>
 
-        <!-- Baby-Gerät -->
+        <!-- Sektion 2: Baby-Gerät -->
         <section id="baby-zone" class="hidden">
             <article>
-                <h3>🔴 Kamera läuft</h3>
-                <p>Scanne diesen QR-Code mit dem Eltern-Handy, um den Stream direkt zu starten:</p>
+                <h3>🔴 Baby-Gerät aktiv</h3>
+                <p>Sende diesen Link per Messenger (z.B. WhatsApp) an das Eltern-Handy:</p>
                 
-                <div id="canvas-container">
-                    <canvas id="qrcode"></canvas>
+                <div class="link-box">
+                    <input type="text" id="baby-link-field" readonly onclick="this.select()">
+                    <button id="btn-copy-link" class="secondary">📋 Link kopieren</button>
+                </div>
+
+                <div id="step2-baby" class="hidden" style="margin-top: 20px; border-top: 1px solid #444; padding-top: 20px;">
+                    <p style="color: #00bcd4;"><strong>Schritt 2:</strong> Füge hier die Antwort ein, die du vom Eltern-Handy zurückbekommst:</p>
+                    <input type="text" id="baby-answer-input" placeholder="Antwort-Code hier einfügen...">
+                    <button id="btn-connect-final">Verbindung freischalten</button>
                 </div>
                 
-                <p><small>Alternativ: Sende die URL der Browserzeile an das Elterngerät.</small></p>
                 <video id="local-video" autoplay playsinline muted></video>
             </article>
         </section>
 
-        <!-- Eltern-Gerät -->
+        <!-- Sektion 3: Eltern-Gerät -->
         <section id="parents-zone" class="hidden">
             <article>
-                <h3>🧓 Empfänger-Modus</h3>
-                <p id="parent-instruction">Verbindung wird aufgebaut...</p>
+                <h3>🧓 Eltern-Gerät aktiv</h3>
+                <p id="parent-instruction">Verbindung wird initialisiert...</p>
+                
+                <div id="parent-response-zone" class="hidden link-box">
+                    <p>Kopiere diesen Antwort-Code und sende ihn zurück an das Baby-Handy:</p>
+                    <input type="text" id="parent-answer-field" readonly onclick="this.select()">
+                    <button id="btn-copy-answer" class="secondary">📋 Antwort-Code kopieren</button>
+                </div>
+
                 <video id="remote-video" autoplay playsinline></video>
             </article>
         </section>
     </main>
 
-    <!-- QR Code Bibliothek einbinden -->
-    <script src="https://jsdelivr.net"></script>
-
     <script>
         let peerConnection;
         let localStream;
 
-        // Keine externen Server – rein lokales P2P-Verbindungssetup
-        const configuration = { iceServers: [] };
+        // Nutzt Standard-STUN-Server, damit der Browser die Verbindungsauswahl sofort triggert
+        const configuration = { 
+            iceServers: [{ urls: 'stun:://google.com' }] 
+        };
 
         const statusText = document.getElementById('status');
         const setupZone = document.getElementById('setup-zone');
         const babyZone = document.getElementById('baby-zone');
         const parentsZone = document.getElementById('parents-zone');
 
-        // Automatischer Start des Eltern-Modus, falls ein P2P-Schlüssel in der URL klebt
+        // Prüfen, ob ein Angebot in der URL existiert (Eltern-Modus-Direktaufruf)
         const urlParams = new URLSearchParams(window.location.search);
         const offerParam = urlParams.get('offer');
 
@@ -83,7 +95,7 @@
         document.getElementById('btn-baby').addEventListener('click', async () => {
             setupZone.classList.add('hidden');
             babyZone.classList.remove('hidden');
-            statusText.innerText = "Starte Video-Vorschau...";
+            statusText.innerText = "Kamera wird gestartet...";
 
             try {
                 localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
@@ -92,36 +104,38 @@
                 peerConnection = new RTCPeerConnection(configuration);
                 localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
 
-                // Handshake (Offer) erstellen
+                // Erstelle das Angebot (Offer) sofort
                 const offer = await peerConnection.createOffer();
                 await peerConnection.setLocalDescription(offer);
 
-                // Warten, bis der Browser alle lokalen P2P-Pfade gesammelt hat
-                peerConnection.onicecandidate = (event) => {
-                    if (event.candidate === null) {
-                        // Verschlüssele den P2P-Schlüssel kompakt in die URL
-                        const base64Offer = btoa(JSON.stringify(peerConnection.localDescription));
-                        const targetUrl = `${window.location.origin}${window.location.pathname}?offer=${base64Offer}`;
+                // Trick für sofortige Link-Erstellung: Wir packen das Offer direkt in die URL
+                const base64Offer = btoa(JSON.stringify(offer));
+                const targetUrl = `${window.location.origin}${window.location.pathname}?offer=${base64Offer}`;
+                
+                // Link im Textfeld anzeigen
+                document.getElementById('baby-link-field').value = targetUrl;
+                statusText.innerText = "Link generiert! Bitte an das Eltern-Handy senden.";
+                document.getElementById('step2-baby').classList.remove('hidden');
 
-                        // QR-Code generieren, damit das Eltern-Handy ihn sofort abscannen kann
-                        QRCode.toCanvas(document.getElementById('qrcode'), targetUrl, { width: 250 }, (error) => {
-                            if (error) console.error(error);
-                            statusText.innerHTML = "<strong>QR-Code generiert! Bitte abscannen.</strong>";
-                        });
+                // Button-Event zum Kopieren
+                document.getElementById('btn-copy-link').addEventListener('click', () => {
+                    document.getElementById('baby-link-field').select();
+                    navigator.clipboard.writeText(targetUrl);
+                    alert("Link erfolgreich kopiert! Verschicke ihn jetzt per Messenger.");
+                });
 
-                        // Falls der Browser den Link per WhatsApp teilen will, aktualisieren wir das Adressfeld
-                        window.history.pushState({}, '', targetUrl);
-                    }
-                };
+                // Finaler Handshake auf dem Baby-Handy
+                document.getElementById('btn-connect-final').addEventListener('click', async () => {
+                    const rawAnswer = document.getElementById('baby-answer-input').value.trim();
+                    if (!rawAnswer) return alert("Bitte den Antwort-Code des Eltern-Handys einfügen!");
 
-                // Wenn das Eltern-Handy den QR-Code scannt und seine Antwort schickt, schließt sich der Kreis
-                window.addEventListener('hashchange', async () => {
-                    const hash = window.location.hash.substring(1);
-                    if (hash) {
-                        const answerDescription = JSON.parse(atob(hash));
+                    try {
+                        const answerDescription = JSON.parse(atob(rawAnswer));
                         await peerConnection.setRemoteDescription(new RTCSessionDescription(answerDescription));
-                        statusText.innerHTML = "<strong>🔴 Verbindung erfolgreich! Stream läuft live.</strong>";
-                        document.getElementById('canvas-container').style.display = 'none';
+                        statusText.innerHTML = "<strong>🔴 Live-Stream läuft! Verbindung stabil.</strong>";
+                        document.getElementById('step2-baby').classList.add('hidden');
+                    } catch (e) {
+                        alert("Ungültiger Antwort-Code: " + e.message);
                     }
                 });
 
@@ -134,25 +148,26 @@
         document.getElementById('btn-parents').addEventListener('click', () => {
             setupZone.classList.add('hidden');
             parentsZone.classList.remove('hidden');
-            document.getElementById('parent-instruction').innerText = "Bitte scanne den QR-Code auf dem Baby-Gerät, um die Kamera direkt zu öffnen.";
-            statusText.innerText = "Warte auf QR-Scan...";
+            document.getElementById('parent-instruction').innerText = "Bitte öffne auf diesem Gerät den Link, den du vom Baby-Handy zugeschickt bekommen hast.";
+            statusText.innerText = "Warte auf Link-Aufruf...";
         });
 
         async function startParentsMode(base64Offer) {
             setupZone.classList.add('hidden');
             parentsZone.classList.remove('hidden');
-            statusText.innerText = "Verarbeite P2P-Verbindung...";
+            statusText.innerText = "Verarbeite Video-Einladung...";
 
             try {
                 const offerDescription = JSON.parse(atob(base64Offer));
                 peerConnection = new RTCPeerConnection(configuration);
 
-                // Wenn Videodaten eintreffen -> Sofort anzeigen
+                // Wenn Videodaten eintreffen -> Live anzeigen
                 peerConnection.ontrack = (event) => {
                     if (event.streams && event.streams[0]) {
                         document.getElementById('remote-video').srcObject = event.streams[0];
-                        statusText.innerHTML = "<strong>🔴 Live-Verbindung aktiv!</strong>";
-                        document.getElementById('parent-instruction').innerText = "Übertragung läuft.";
+                        statusText.innerHTML = "<strong>🔴 Verbindung hergestellt!</strong>";
+                        document.getElementById('parent-instruction').innerText = "Live-Übertragung läuft.";
+                        document.getElementById('parent-response-zone').classList.add('hidden');
                     }
                 };
 
@@ -160,25 +175,20 @@
                 const answer = await peerConnection.createAnswer();
                 await peerConnection.setLocalDescription(answer);
 
-                // Antwort (Answer) generieren
-                peerConnection.onicecandidate = (event) => {
-                    if (event.candidate === null) {
-                        const base64Answer = btoa(JSON.stringify(peerConnection.localDescription));
-                        
-                        // Das Eltern-Gerät öffnet ein Fenster, das dem Baby-Handy den Rückkanal mitteilt. 
-                        // Da wir auf GitHub Pages keinen Server haben, ist das der sicherste, absolut unzerstörbare Weg.
-                        const returnUrl = `${window.location.href.split('?')[0]}#${base64Answer}`;
-                        
-                        statusText.innerHTML = "<strong>Fast geschafft!</strong>";
-                        document.getElementById('parent-instruction').innerHTML = `
-                            <p>Um den Handshake abzuschließen, tippe unten auf den Button. Sende diesen Link einmalig zurück an das Baby-Gerät (z.B. kurz öffnen/neu laden auf dem Baby-Handy).</p>
-                            <a href="${returnUrl}" target="_blank" class="button">Verbindung freischalten</a>
-                        `;
-                    }
-                };
+                // Antwort sofort für das Baby-Handy bereitstellen
+                const base64Answer = btoa(JSON.stringify(answer));
+                document.getElementById('parent-answer-field').value = base64Answer;
+                document.getElementById('parent-response-zone').classList.remove('hidden');
+                document.getElementById('parent-instruction').innerText = "Schritt 2 erforderlich:";
+
+                document.getElementById('btn-copy-answer').addEventListener('click', () => {
+                    document.getElementById('parent-answer-field').select();
+                    navigator.clipboard.writeText(base64Answer);
+                    alert("Antwort-Code kopiert! Schicke diesen Code zurück an das Baby-Handy.");
+                });
 
             } catch (err) {
-                statusText.innerHTML = `<span style="color:red">Fehler beim Verbinden: ${err.message}</span>`;
+                statusText.innerHTML = `<span style="color:red">Verbindungsfehler: ${err.message}</span>`;
             }
         }
     </script>
